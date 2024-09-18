@@ -26,13 +26,13 @@ class PaymentController extends Controller
     public function initiatePayment(Request $request)
     {
         $client = new Client();
-
+        $trx_id = uniqid();
         $data = [
             'store_id' => $this->store_id,
             'store_passwd' => $this->store_password,
-            'total_amount' => 20,  // Payment Amount
+            'total_amount' => $request->amount,  // Payment Amount
             'currency' => $this->config['currency'],
-            'tran_id' => uniqid(),  // Unique Transaction ID
+            'tran_id' => $trx_id,  // Unique Transaction ID
             'success_url' => url($this->config['success_url']),
             'fail_url' => url($this->config['fail_url']),
             'cancel_url' => url($this->config['cancel_url']),
@@ -41,7 +41,7 @@ class PaymentController extends Controller
             "product_name" => $this->config['product_name'],
             "product_category" => "online",
             "product_profile" => "general",
-            'cus_name' => "Mine",
+            'cus_name' => $request->name,
             'cus_email' => $request->email ?: 'sanjoyksaha92@gmail.com',
             'cus_add1' => $request->address ?: "Test",
             'cus_city' => $request->city ?: "Test",
@@ -69,7 +69,7 @@ class PaymentController extends Controller
             ]);
 
             $result = json_decode($response->getBody(), true);
-            dd($result);
+//            dd($result);
 
             if ($result['status'] === 'SUCCESS') {
                 return redirect($result['GatewayPageURL']);
@@ -82,38 +82,72 @@ class PaymentController extends Controller
     }
 
     // Handle successful payment
-    public function paymentSuccess(Request $request)
+    public function getPaymentStatus(Request $request)
     {
-        $tran_id = $request->input('tran_id');
-        $amount = $request->input('amount');
-        $currency = $request->input('currency');
-        $service = new SSLCommerzService();
+//        dd($request->all());
+        $tran_id = $request['tran_id'];
+        $amount = $request['amount'];
+        $currency = $request['currency'];
+        $status = $request['status'];
 
         #Check order status in order tabel against the transaction id or order id.
         $order_details = DB::table('orders')
             ->where('transaction_id', $tran_id)
             ->select('transaction_id', 'status', 'currency', 'amount', 'payment_status')->first();
-
-        if ($order_details->payment_status == 'Initiated') {
-
-            $validate = $service->orderValidate($request->all(), $tran_id, $amount, $currency);
-            if ($validate) {
-                $update_product = DB::table('orders')
-                    ->where('transaction_id', $tran_id)
-                    ->update(['status' => 'Processing', 'payment_status' => 'Success', 'updated_at' => date('Y-m-d H:i:s')]);
-
-                echo "<br >Transaction is successfully Completed";
-            }
-        } else if ($order_details->status == 'Processing' || $order_details->status == 'Complete') {
+        $msg = '';
+        if ($order_details->status == 'Processing' || $order_details->status == 'Complete') {
             /*
              That means through IPN Order status already updated. Now you can just show the customer that transaction is completed. No need to udate database.
              */
-            echo "Transaction is successfully Completed";
-        } else {
-            #That means something wrong happened. You can redirect customer to your product page.
-            echo "Invalid Transaction";
+            $msg = "Transaction is successfully Completed";
         }
 
+        $order_status = '';
+        $payment_status = '';
+        if ($order_details->payment_status == 'Initiated') {
+            if ($status == 'VALID') {
+                $service = new SSLCommerzService();
+                $validate = $service->orderValidate($request->all(), $tran_id, $amount, $currency);
+                if ($validate) {
+                    $order_status = 'Processing';
+                    $payment_status = 'Success';
+                    $msg = "Transaction is successfully Completed";
+                }
+            } else if ($status == 'FAILED') {
+                if ($order_details->status == 'Pending') {
+                    $order_status = 'Pending';
+                    $payment_status = 'Failed';
+                    $msg = "Transaction is Falied";
+                }
+            } else if ($status == 'CANCELLED') {
+                if ($order_details->status == 'Pending') {
+                    $order_status = 'Pending';
+                    $payment_status = 'Cancelled';
+                    $msg = "Transaction is Cancelled";
+                }
+            }
+        }
+        else {
+            $msg = 'Invalid Transaction';
+        }
+
+        DB::table('ssl_log')->insert([
+            'transaction_id' => $tran_id,
+            'amount' => $amount,
+            'status' => $status,
+            'data' => json_encode($request->all(), true),
+            'created_at' => date('Y-m-d h:i:s')
+        ]);
+
+        $update_product = DB::table('orders')
+            ->where('transaction_id', $tran_id)
+            ->update([
+                'status' => $order_status,
+                'payment_status' => $payment_status,
+                'updated_at' => date('Y-m-d H:i:s')
+            ]);
+
+        return view('final_status', compact('msg'));
 
     }
 
@@ -165,7 +199,7 @@ class PaymentController extends Controller
         {
 
             $tran_id = $request->input('tran_id');
-            $ipn = DB::table('ipn')->insert(['tran_id' => $tran_id, 'data' => json_encode($request->all(), true)]);
+            $ipn = DB::table('ipn')->insert(['tran_id' => $tran_id]);
 
             #Check order status in order tabel against the transaction id or order id.
             $order_details = DB::table('orders')

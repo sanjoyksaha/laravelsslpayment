@@ -13,9 +13,9 @@ return [
         'refund_status' => "/validator/api/merchantTransIDvalidationAPI.php",
     ],
     'currency' => env('SSLCOMMERZ_CURRENCY', 'BDT'),
-    'success_url' => 'payment/success',
-    'fail_url' => 'payment/failure',
-    'cancel_url' => 'payment/cancel',
+    'success_url' => 'payment/getpaymentstatus',
+    'fail_url' => 'payment/getpaymentstatus',
+    'cancel_url' => 'payment/getpaymentstatus',
     'ipn_url' => 'payment/ipn_listen',
     'product_name' => 'MyArrank.',
 ];
